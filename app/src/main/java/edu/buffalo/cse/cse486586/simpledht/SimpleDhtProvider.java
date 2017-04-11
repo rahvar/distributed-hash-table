@@ -8,6 +8,7 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.PrintWriter;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -17,14 +18,19 @@ import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Formatter;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingDeque;
+import java.util.concurrent.BlockingQueue;
 import java.util.regex.Pattern;
 
 import android.content.ContentProvider;
+import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.net.Uri;
+import android.nfc.Tag;
 import android.os.AsyncTask;
 import android.telephony.TelephonyManager;
 import android.util.Log;
@@ -42,9 +48,35 @@ public class SimpleDhtProvider extends ContentProvider {
     ArrayList<String> portList = new ArrayList<String>(Arrays.asList(REMOTE_PORT0, REMOTE_PORT1, REMOTE_PORT2, REMOTE_PORT3, REMOTE_PORT4));
     static final int SERVER_PORT = 10000;
 
+    ArrayList<String> pList = new ArrayList<String>(Arrays.asList("5554","5556","5558","5560","5562"));
     ArrayList<Node> nodeList = new ArrayList<Node>();
     String predNode = "";
     String succNode = "";
+
+    String predNodeId="";
+    String succNodeId="";
+
+    String cNode="";
+    String cNodeId="";
+
+
+
+    ContentResolver contentProvider;
+    Uri gUri;
+    BlockingQueue<String> bq = new ArrayBlockingQueue<String>(10);
+
+    /**
+     * ATTENTION: This was auto-generated to implement the App Indexing API.
+     * See https://g.co/AppIndexing/AndroidStudio for more information.
+     */
+
+
+    private Uri buildUri(String scheme, String authority) {
+        Uri.Builder uriBuilder = new Uri.Builder();
+        uriBuilder.authority(authority);
+        uriBuilder.scheme(scheme);
+        return uriBuilder.build();
+    }
 
     @Override
     public boolean onCreate() {
@@ -61,22 +93,41 @@ public class SimpleDhtProvider extends ContentProvider {
         final String myPort = String.valueOf((Integer.parseInt(portStr) * 2));
         //TAG = TAG + emID;
 
-        if(myPort.equals(REMOTE_PORT0)){
-            String node_id = "";
-            try {
-                node_id = genHash(portStr);
-            } catch (NoSuchAlgorithmException e) {
-                Log.d(TAG,e+"");
+        //String node_id = "";
+        contentProvider = getContext().getContentResolver();
+        gUri = buildUri("content", "edu.buffalo.cse.cse486586.simpledht.provider");
+
+
+
+        cNode = portStr;
+
+        try {
+            cNodeId = genHash(cNode);
+
+            String s = "";
+            for(String p:pList){
+                s+= p +":"+ genHash(p)+"--";
             }
-            Node n = new Node(portStr,node_id);
+            Log.d(TAG,"PortHashes:"+s);
+
+        } catch (NoSuchAlgorithmException e) {
+            Log.d(TAG,e+"");
+        }
+
+
+        if(myPort.equals(REMOTE_PORT0)){
+
+            Node n = new Node(cNode,cNodeId);
             nodeList.add(n);
             Log.d(TAG,"NodeList start check:"+nodeList.size());
 
         }
-        try {
-            Thread.sleep(100);
-        } catch (InterruptedException e) {
-            e.printStackTrace();
+        if(!myPort.equals(REMOTE_PORT0)) {
+            try {
+                Thread.sleep(2000);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
         }
         try {
             /*
@@ -113,10 +164,10 @@ public class SimpleDhtProvider extends ContentProvider {
         return false;
     }
 
-    private class ServerTask extends AsyncTask<ServerSocket, String, String> {
+    private class ServerTask extends AsyncTask<ServerSocket, String, Void> {
 
         @Override
-        protected String doInBackground(ServerSocket... sockets) {
+        protected Void doInBackground(ServerSocket... sockets) {
             ServerSocket serverSocket = sockets[0];
             BufferedReader reader;
             //serverSocket.toString();
@@ -153,14 +204,14 @@ public class SimpleDhtProvider extends ContentProvider {
 
 
                         if(currNode.getSucc()==null && currNode.getPred()==null){
-                            Log.d(TAG,"Second Node Joining");
+                            //Log.d(TAG,"Second Node Joining");
                             currNode.setSucc(newNode);
                             currNode.setPred(newNode);
                             newNode.setSucc(currNode);
                             newNode.setPred(currNode);
                         }
                         else if(currNode.getNodeId().compareTo(newNode.getNodeId())<0 ){
-                            Log.d(TAG,"GreaterThan");
+                            //Log.d(TAG,"GreaterThan");
                             Node succ = currNode.getSucc();
                             while(succ.getNodeId().compareTo(newNode.getNodeId())<0){
                                 succ = succ.getSucc();
@@ -176,13 +227,18 @@ public class SimpleDhtProvider extends ContentProvider {
 
                         }
                         else{
-                            Log.d(TAG,"LesserThan");
+                            //Log.d(TAG,"LesserThan");
+
                             Node pred= currNode.getPred();
-                            while(pred.getNodeId().compareTo(newNode.getNodeId())<0){
+                            Log.d(TAG,"Checking:"+pred.getNodeId()+":"+newNode.getNodeId());
+                            while(pred.getNodeId().compareTo(newNode.getNodeId())>0){
                                 pred = pred.getPred();
-                                if(pred.getNodeId().compareTo(pred.getSucc().getNodeId())<0)
+                                Log.d(TAG,"Checking:"+pred.getNodeId()+":"+newNode.getNodeId());
+                                if(pred.getNodeId().compareTo(pred.getSucc().getNodeId())>0 && newNode.getNodeId().compareTo(pred.getNodeId())<0   )
                                     break;
                             }
+
+                            Log.d(TAG,"CheckingOut:"+pred.getNodeId()+":"+newNode.getNodeId());
                             Node succNode= pred.getSucc();
                             succNode.setPred(newNode);
                             pred.setSucc(newNode);
@@ -210,19 +266,102 @@ public class SimpleDhtProvider extends ContentProvider {
 
                         Log.d(TAG,"ReceivedNodeInfo:"+predNode+"-"+succNode);
 
+                        predNodeId = genHash(predNode);
+                        succNodeId = genHash(succNode);
                         outStream.writeBytes("Done\n");
                     }
 
 
+                    else if(data.startsWith("Route")){
+
+                        String[] routeInfo = data.split(":");
+
+                        ContentValues cv = new ContentValues();
+
+                        String cvKey = routeInfo[1];
+                        String cvValue = routeInfo[2];
+
+                        Log.d(TAG,"FirstRoute:"+cvKey+":"+cvValue);
+                        cv.put("key", cvKey);
+                        cv.put("value", cvValue);
+                        contentProvider.insert(gUri, cv);
+
+                        outStream.writeBytes("RouteDone\n");
+
+                    }
+
+                    else if(data.startsWith(("Query"))){
+                        String[] queryInfo = data.split(":");
+                        String queryKey = queryInfo[1];
+                        String senderInfo = queryInfo[2];
+
+                        Log.d(TAG,"ReceivedQuery:"+queryKey);
+                        String query = "Searching:"+queryKey+":"+senderInfo;
+                        contentProvider.query(gUri,null,query,null,null);
 
 
+                        outStream.writeBytes("QueryDone\n");
+                    }
+
+                    else if(data.startsWith("FoundKey")){
+                        Log.d(TAG,"Wtf"+data);
+                        String[] fKeyInfo = data.split(":");
+
+                        String key = fKeyInfo[1];
+                        String value = fKeyInfo[2];
+
+                        String fin = "Found:"+key+":"+value;
+
+
+
+                        String  keyVal = key+":"+value;
+
+                        bq.put(keyVal);
+                        Log.d(TAG,"FinalQDone:"+fin+"Size:"+bq.size());
+                        //contentProvider.query(gUri,null,fin,null,null);
+
+                        outStream.writeBytes("FoundKeyDone\n");
+                    }
+                    else if(data.startsWith("FoundStar")){
+                        Log.d(TAG,"StarRequest");
+
+                        String sender = data.split(":")[3];
+                        String out = "";
+                        Cursor cursor = contentProvider.query(gUri,null,"@",null,null);
+                        if (cursor.moveToFirst()){
+                            do{
+                                String k1 = cursor.getString(cursor.getColumnIndex("key"));
+                                String v1 = cursor.getString(cursor.getColumnIndex("value"));
+                                out+=k1+"-"+v1+":";
+
+                                // do what ever you want here
+                            }while(cursor.moveToNext());
+                        }
+                        cursor.close();
+
+                        Log.d(TAG,"RetrievedData::"+sender+":::"+out);
+
+                        if(out.isEmpty()){
+                            out="*";
+                        }
+
+                        outStream.writeBytes("FoundStarDone::"+succNode+"::"+out+"\n");
+
+
+                    }
+                    else if(data.startsWith("Delete")){
+
+                        contentProvider.delete(gUri,"@",null);
+                        outStream.writeBytes("DeleteDone\n");
+                    }
                 }
 
             } catch (Exception e) {
                 Log.e(TAG, e + "");
             }
 
-            return "";
+
+            return null;
         }
     }
 
@@ -232,20 +371,16 @@ public class SimpleDhtProvider extends ContentProvider {
         protected Void doInBackground(String... msgs) {
             String msgToSend = msgs[0]+"\n";
 
-
-
-
             String remotePort;
             String nodeInfo="";
             try {
 
-                for (int i = 0; i < portList.size(); i++) {
 
-                    remotePort = portList.get(i);
-                    if(msgToSend.startsWith("NodeJoin") && remotePort!=REMOTE_PORT0)
-                        continue;
+                if(msgToSend.startsWith("NodeJoin")){
+
+
                     Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
-                            Integer.parseInt(remotePort));
+                            Integer.parseInt(REMOTE_PORT0));
 
                     DataOutputStream outStream = new DataOutputStream(socket.getOutputStream());
 
@@ -278,20 +413,23 @@ public class SimpleDhtProvider extends ContentProvider {
 
 
 
-            Log.d(TAG,nodeInfo);
-            String[] connInfo = nodeInfo.split(":::");
-            Log.d(TAG,"ConnSize:"+connInfo.length);
 
-            try {
+            if(msgToSend.startsWith("NodeJoin")) {
+
+                Log.d(TAG,nodeInfo);
+                String[] connInfo = nodeInfo.split(":::");
+                Log.d(TAG,"ConnSize:"+connInfo.length);
+
+                try {
 
 
                     for (String conn : connInfo) {
 
-                        Log.d(TAG,conn);
+                        Log.d(TAG, conn);
 
 
                         String[] portInfo = conn.split("-");
-                        remotePort = Integer.toString(Integer.parseInt(portInfo[0])*2);
+                        remotePort = Integer.toString(Integer.parseInt(portInfo[0]) * 2);
 
 
                         Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
@@ -304,30 +442,225 @@ public class SimpleDhtProvider extends ContentProvider {
                                 new InputStreamReader(socket.getInputStream()));
 
 
-                        String sending="Info-"+portInfo[1]+"-"+portInfo[2]+"\n";
+                        String sending = "Info-" + portInfo[1] + "-" + portInfo[2] + "\n";
                         outStream.writeBytes(sending);
 
                         outStream.flush();
 
-                        Log.d(TAG, "SentNodeInfo:" +portInfo[0]+"-Pred:"+portInfo[1]+"-Succ:"+portInfo[2]);
+                        Log.d(TAG, "SentNodeInfo:" + portInfo[0] + "-Pred:" + portInfo[1] + "-Succ:" + portInfo[2]);
                         String ack = in.readLine();
 
 
-                        Log.e(TAG, ack + remotePort+" - checking ACK");
+                        Log.e(TAG, ack + remotePort + " - checking ACK");
                         if (ack.startsWith("Done")) {
 
                             socket.close();
                         }
 
                     }
+                } catch (Exception e) {
+                    Log.d(TAG,"JoiningException:" +e);
                 }
-            catch (Exception e){
-                    Log.d(TAG,e+"");
+            }
+
+            if(msgToSend.startsWith("Route")){
+                try{
+
+
+
+                    Log.d(TAG,"AboutToRoute: "+msgToSend);
+
+                    remotePort = Integer.toString(Integer.parseInt(succNode) * 2);
+                    Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
+                            Integer.parseInt(remotePort));
+
+                    DataOutputStream outStream = new DataOutputStream(socket.getOutputStream());
+
+
+                    outStream.writeBytes(msgToSend);
+
+
+                    BufferedReader in = new BufferedReader(
+                            new InputStreamReader(socket.getInputStream()));
+
+                    String ack = in.readLine();
+                    if(ack.startsWith("RouteDone")){
+                        socket.close();
+                    }
                 }
+                catch (Exception e){
+                    Log.d(TAG,"RoutingException:"+e);
+                }
+
+
+
+            }
+
+            if(msgToSend.startsWith("Query")){
+
+                try{
+
+
+
+                    Log.d(TAG,"AboutToQuery: "+msgToSend+succNode);
+
+                    remotePort = Integer.toString(Integer.parseInt(succNode) * 2);
+                    Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
+                            Integer.parseInt(remotePort));
+
+                    DataOutputStream outStream = new DataOutputStream(socket.getOutputStream());
+
+
+                    outStream.writeBytes(msgToSend);
+
+
+                    BufferedReader in = new BufferedReader(
+                            new InputStreamReader(socket.getInputStream()));
+
+                    String ack = in.readLine();
+                    if(ack.startsWith("QueryDone")){
+                        socket.close();
+                    }
+                }
+                catch (Exception e){
+                    Log.d(TAG,"QueryingException:"+e);
+                }
+
+            }
+
+
+            if(msgToSend.startsWith("FoundKey")){
+                try{
+
+
+
+                    Log.d(TAG,"FoundKeyClient: "+msgToSend);
+
+                    String[] data = msgToSend.split(":");
+                    remotePort = Integer.toString(Integer.parseInt(data[3].trim()) * 2);
+                    Log.d(TAG,"FoundKeyClient:"+remotePort);
+                    Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
+                            Integer.parseInt(remotePort));
+
+                    DataOutputStream outStream = new DataOutputStream(socket.getOutputStream());
+
+
+                    outStream.writeBytes(msgToSend);
+
+
+                    BufferedReader in = new BufferedReader(
+                            new InputStreamReader(socket.getInputStream()));
+
+                    String ack = in.readLine();
+                    if(ack.startsWith("FoundKeyDone")){
+                        socket.close();
+                    }
+                }
+                catch (Exception e){
+                    Log.d(TAG,"FoundKeyException:"+e);
+                }
+            }
+
+            if(msgToSend.startsWith("FoundStar")){
+                Log.d(TAG,"Star"+cNode);
+                try{
+
+                String[] data = msgToSend.split(":");
+
+                String sendPort = data[3].trim();
+                String allVals = "";
+                while(!cNode.equals(sendPort)){
+
+                    remotePort = Integer.toString(Integer.parseInt(sendPort) * 2);
+                    Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
+                            Integer.parseInt(remotePort));
+
+                    DataOutputStream outStream = new DataOutputStream(socket.getOutputStream());
+
+
+                    outStream.writeBytes(msgToSend);
+
+
+                    BufferedReader in = new BufferedReader(
+                            new InputStreamReader(socket.getInputStream()));
+
+                    String ack = in.readLine();
+                    if(ack.startsWith("FoundStarDone")){
+
+                        String[] inf = ack.split("::");
+                        sendPort = inf[1];
+
+                        Log.d(TAG,"NextPort:"+sendPort);
+
+                        if(!inf[2].trim().equals("*"))
+                            allVals += inf[2].trim();
+
+                        socket.close();
+                    }
+
+
+                }
+                    Log.d(TAG,"ReceivedALLData"+allVals);
+                    bq.put(allVals);
+
+                }catch (Exception e){
+                    Log.d(TAG,"StarExc"+e);
+                }
+
+
+
+            }
+
+            if(msgToSend.startsWith("Delete")){
+
+                try{
+
+                    String[] data = msgToSend.split(":");
+
+                    String sendPort = data[1].trim();
+                    while(!cNode.equals(sendPort)){
+
+                        remotePort = Integer.toString(Integer.parseInt(sendPort) * 2);
+                        Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
+                                Integer.parseInt(remotePort));
+
+                        DataOutputStream outStream = new DataOutputStream(socket.getOutputStream());
+
+
+                        outStream.writeBytes(msgToSend);
+
+
+                        BufferedReader in = new BufferedReader(
+                                new InputStreamReader(socket.getInputStream()));
+
+                        String ack = in.readLine();
+                        if(ack.startsWith("DeleteDone")){
+
+                            String[] inf = ack.split(":");
+                            sendPort = inf[1];
+
+                            Log.d(TAG,"DeletedAtPort:"+sendPort);
+
+                            socket.close();
+                        }
+
+
+                    }
+
+                }catch (Exception e){
+                    Log.d(TAG,"DeleteExc"+e);
+                }
+
+
+            }
+
+            //Object result = asyncTask.execute().get();
 
 
             return null;
         }
+
+
 
 
 
@@ -336,6 +669,29 @@ public class SimpleDhtProvider extends ContentProvider {
     @Override
     public int delete(Uri uri, String selection, String[] selectionArgs) {
         // TODO Auto-generated method stub
+
+        Log.d(TAG,"Entered Delete");
+
+        if(selection.equals("*") || selection.equals("@")) {
+            File[] files = getContext().getFilesDir().listFiles();
+            for (File file : files) {
+
+                file.delete();
+
+            }
+
+            if(selection.equals("*") && !predNode.isEmpty()){
+                String deleteMsg = "Delete:"+succNode;
+                new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR,deleteMsg , cNode);
+            }
+        }
+        else {
+
+            File dir = getContext().getFilesDir();
+            File file = new File(dir,selection);
+            file.delete();
+        }
+
         return 0;
     }
 
@@ -355,17 +711,38 @@ public class SimpleDhtProvider extends ContentProvider {
 
         FileOutputStream outputStream;
 
+        String keyHash="";
         try {
-            //outputStream = openFileOutput(key, Context.MODE_PRIVATE);
-            outputStream = getContext().openFileOutput(key, Context.MODE_PRIVATE);
-            outputStream.write(value.getBytes());
-            outputStream.close();
-        } catch (Exception e) {
-            Log.e("GroupMessenger" ,"File write failed");
+            keyHash = genHash(key);
+        } catch (NoSuchAlgorithmException e) {
+            e.printStackTrace();
         }
 
+        Log.d(TAG,"EnteredInsert:"+key+":"+value);
+        Log.d(TAG,"HashedValues:"+key+"KeyHash:"+keyHash+":Node:"+cNodeId+":Prev:"+predNodeId);
+        if( (predNodeId.isEmpty() && succNodeId.isEmpty()) || (predNodeId.compareTo(keyHash)<0 && keyHash.compareTo(cNodeId)<=0 )
+                || (predNodeId.compareTo(keyHash)<0 && predNodeId.compareTo(cNodeId)>0)
+                || (predNodeId.compareTo(keyHash)>0 && cNodeId.compareTo(keyHash)>0 && predNodeId.compareTo(cNodeId)>0)) {
+            try {
+                //outputStream = openFileOutput(key, Context.MODE_PRIVATE);
+                outputStream = getContext().openFileOutput(key, Context.MODE_PRIVATE);
+                outputStream.write(value.getBytes());
+                outputStream.close();
+            } catch (Exception e) {
+                Log.e("GroupMessenger", "File write failed");
+            }
 
-        Log.d(TAG, "Inserted: "+values.toString());
+            Log.d(TAG, "Inserted: "+values.toString());
+        }
+        else{
+            String insertmsg= "Route:"+key+":"+value;
+
+            Log.d(TAG,"Routing:"+succNode+":"+insertmsg);
+
+            new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, insertmsg, cNode);
+
+        }
+
         return uri;
         //return null;
     }
@@ -379,6 +756,23 @@ public class SimpleDhtProvider extends ContentProvider {
         String columnNames[] = {"key","value"};
         MatrixCursor cursor = new MatrixCursor(columnNames,1);
 
+        String backup = selection;
+        String[] info =new String[5];
+        if(selection.startsWith("Searching")){
+            info = selection.split(":");
+            selection = info[1];
+            String senderNode = info[2];
+        }
+
+        String keyHash="";
+        try {
+            keyHash = genHash(selection);
+        } catch (NoSuchAlgorithmException e) {
+            e.printStackTrace();
+        }
+
+
+        Log.d(TAG,"EnteredQuery:"+backup);
         if(selection!=null) {
 
 
@@ -396,12 +790,117 @@ public class SimpleDhtProvider extends ContentProvider {
                     Log.d(TAG, "Logging files: " + splittedFileName[splittedFileName.length-1]);
                 }
 
+                if(selection.equals("*") && !predNode.isEmpty()){
+                    String found = "FoundStar"+":*:*:"+succNode;
+
+
+                    new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, found, cNode);
+
+
+                    Log.d(TAG, "BlockingUntilStar:" + selection);
+
+                    try {
+                        String starData = "";
+                        starData = bq.take();
+
+                        if(!starData.isEmpty()) {
+                            String[] kvPairs = starData.split(":");
+
+                            for (String kv : kvPairs) {
+                                Log.d(TAG, "KVPair:" + kv);
+                                String[] kvOut = kv.split("-");
+
+                                cursor.addRow(new Object[]{kvOut[0], kvOut[1]});
+
+                            }
+                        }
+
+
+
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+
+                }
+
             }
-            else {
-                cursor = fetchValue(cursor, selection);
+
+            else if( (predNodeId.isEmpty() && succNodeId.isEmpty()) || (predNodeId.compareTo(keyHash)<0 && keyHash.compareTo(cNodeId)<=0 )
+                    || (predNodeId.compareTo(keyHash)<0 && predNodeId.compareTo(cNodeId)>0)
+                    || (predNodeId.compareTo(keyHash)>0 && cNodeId.compareTo(keyHash)>0 && predNodeId.compareTo(cNodeId)>0)) {
+
+                Log.d(TAG,"CorrectCV Found:"+selection);
+
+                String value = "";
+                try {
+                    StringBuilder builder = new StringBuilder();
+                    FileInputStream inputStream = getContext().openFileInput(selection);
+                    int ch;
+                    while ((ch = inputStream.read()) != -1) {
+                        builder.append((char) ch);
+                    }
+                    value = builder.toString();
+                    Log.d(TAG,"RetrievedValueGotit:"+selection+":"+value);
+                    inputStream.close();
+                } catch (FileNotFoundException e) {
+                    Log.e(TAG, "Unable to read file");
+                } catch (IOException e) {
+                    Log.e(TAG,"IO Exception while reading file");
+                    e.printStackTrace();
+                }catch(Exception e){
+                    Log.e(TAG,"ExceptionFile:"+e);
+                }
+
+
+
+                Log.d(TAG,"RetrievedValue:"+selection+":"+value);
+                Log.d(TAG,backup);
+                if(!backup.startsWith("Searching"))
+                    cursor.addRow(new Object[]{selection, value});
+                else{
+
+                    String foundKey = "FoundKey:"+selection+":"+value+":"+info[2];
+                    Log.d(TAG,foundKey);
+                    new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, foundKey, cNode);
+                }
+
             }
+            else if(!backup.startsWith("Searching")) {
+
+
+                String querymsg = "Query:" + selection + ":" + cNode;
+
+                Log.d(TAG, "BlockingUntilKey:" + selection);
+                new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, querymsg, cNode);
+
+
+                try {
+                    String xx = "";
+                    xx = bq.take();
+
+                    String[] f = xx.split(":");
+                    String k = f[0];
+                    String v = f[1];
+                    Log.d(TAG, "DoneReturning:" + k + ":" + v);
+                    cursor.addRow(new Object[]{k, v});
+
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+            else{
+                Log.d(TAG,"Whyyyyyyyyyy:"+selection);
+                String querymsg = "";
+
+                querymsg = "Query:" + info[1]+":" +info[2];
+
+                Log.d(TAG,"ExecutingQuery:"+querymsg);
+                new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, querymsg, cNode);
+            }
+            }
+
             Log.d(TAG,"Query: " +selection);
-        }
+
         return cursor;
 
         //return null;
