@@ -304,7 +304,7 @@ public class SimpleDhtProvider extends ContentProvider {
                     }
 
                     else if(data.startsWith("FoundKey")){
-                        Log.d(TAG,"Wtf"+data);
+
                         String[] fKeyInfo = data.split(":");
 
                         String key = fKeyInfo[1];
@@ -352,7 +352,13 @@ public class SimpleDhtProvider extends ContentProvider {
                     else if(data.startsWith("Delete")){
 
                         contentProvider.delete(gUri,"@",null);
-                        outStream.writeBytes("DeleteDone\n");
+                        outStream.writeBytes("DeleteDone:"+succNode+"\n");
+                    }
+                    else if(data.startsWith("DelKey")){
+                        String[] inf = data.split(":");
+                        Log.d(TAG,"Server delete key: "+inf[1].trim());
+                        contentProvider.delete(gUri,inf[1].trim(),null);
+                        outStream.writeBytes("DelKeyAck\n");
                     }
                 }
 
@@ -610,6 +616,36 @@ public class SimpleDhtProvider extends ContentProvider {
 
 
             }
+            if(msgToSend.startsWith("DelKey")){
+
+                try{
+
+                    Log.d(TAG,"AboutToDelete: "+msgToSend+succNode);
+
+                    remotePort = Integer.toString(Integer.parseInt(succNode) * 2);
+                    Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
+                            Integer.parseInt(remotePort));
+
+                    DataOutputStream outStream = new DataOutputStream(socket.getOutputStream());
+
+
+                    outStream.writeBytes(msgToSend);
+
+
+                    BufferedReader in = new BufferedReader(
+                            new InputStreamReader(socket.getInputStream()));
+
+                    String ack = in.readLine();
+                    if(ack.startsWith("DelKeyAck")){
+                        socket.close();
+                    }
+                }
+                catch (Exception e){
+                    Log.d(TAG,"DekKeyException:"+e);
+                }
+
+
+            }
 
             if(msgToSend.startsWith("Delete")){
 
@@ -637,7 +673,7 @@ public class SimpleDhtProvider extends ContentProvider {
                         if(ack.startsWith("DeleteDone")){
 
                             String[] inf = ack.split(":");
-                            sendPort = inf[1];
+                            sendPort = inf[1].trim();
 
                             Log.d(TAG,"DeletedAtPort:"+sendPort);
 
@@ -654,7 +690,7 @@ public class SimpleDhtProvider extends ContentProvider {
 
             }
 
-            //Object result = asyncTask.execute().get();
+            //Object result = asyncTask.exerte().get();
 
 
             return null;
@@ -670,7 +706,7 @@ public class SimpleDhtProvider extends ContentProvider {
     public int delete(Uri uri, String selection, String[] selectionArgs) {
         // TODO Auto-generated method stub
 
-        Log.d(TAG,"Entered Delete");
+        Log.d(TAG,"Entered Delete: "+selection);
 
         if(selection.equals("*") || selection.equals("@")) {
             File[] files = getContext().getFilesDir().listFiles();
@@ -689,7 +725,15 @@ public class SimpleDhtProvider extends ContentProvider {
 
             File dir = getContext().getFilesDir();
             File file = new File(dir,selection);
-            file.delete();
+            if(file.exists()) {
+                file.delete();
+                Log.d(TAG,"Deleting "+selection+" at: "+cNode);
+            }
+            else {
+                new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, "DelKey:" + selection, cNode);
+
+                Log.d(TAG,"Couldnt delete: "+selection+ "passing to "+ succNode);
+            }
         }
 
         return 0;
